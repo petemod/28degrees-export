@@ -12,18 +12,21 @@ import random
 from collections import namedtuple
 from functools import reduce
 
-from selenium import webdriver
+# from selenium import webdriver
+from seleniumwire import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 
+import json
+
 import db
-from dateutil import format_tran_date_for_file, format_tran_date_for_qif,\
-                     parse_tran_date
+from dateutil import format_tran_date_for_file, format_tran_date_for_qif, \
+    parse_tran_date
 
 random.seed()
-BASE_URL = 'https://28degrees-online.latitudefinancial.com.au/';
-WAIT_DELAY = 3
+LOGIN_URL = 'https://servicecentre.latitudefinancial.com.au/login'
+WAIT_DELAY = 5
 LOGIN_DELAY = 3
 
 Transaction = namedtuple('Transaction',
@@ -32,20 +35,19 @@ export_path = './export'
 
 
 def messages(before, after_ok, after_fail):
-
     def external_decorator(f):
         def wrapped(*args, **kwargs):
             print(before)
             r = f(*args, **kwargs)
             print(after_ok if r else after_fail)
             return r
+
         return wrapped
 
     return external_decorator
 
 
 def get_credentials():
-
     print('Enter your username:')
     lines = []
     lines.append(input())
@@ -59,9 +61,9 @@ def get_next_btn(browser):
 
 
 def login(creds, captcha):
-
     driver = webdriver.Chrome()
-    driver.get(BASE_URL)
+
+    driver.get(LOGIN_URL)
 
     if captcha:
         print('Press enter to continue after Captcha:')
@@ -70,67 +72,102 @@ def login(creds, captcha):
         time.sleep(LOGIN_DELAY)
 
     try:
-        user = driver.find_element(By.NAME, 'USER')
+        user = driver.find_element(By.NAME, 'latitude-id-email-address')
     except NoSuchElementException as exception:
         exit("Could not find the login screen. Use --captcha option if you need to manually complete a captcha")
 
     user.send_keys(creds[0])
-    user = driver.find_element(By.NAME, 'PASSWORD')
+    btn = driver.find_element(By.CSS_SELECTOR, "div[class*='login_container'] div[class*='loginWidget'] button")
+    btn.click()
+    time.sleep(LOGIN_DELAY)
+    user = driver.find_element(By.NAME, 'password')
     user.send_keys(creds[1])
-    btn = driver.find_element(By.NAME, 'SUBMIT')
+    btn = driver.find_element(By.CSS_SELECTOR, "#loginScrollableContainer button > span")
+
+    # btn = driver.find_element(By.NAME, 'SUBMIT')
     btn.click()
 
     time.sleep(WAIT_DELAY)
 
-    tranLink = driver.find_element(By.XPATH, u'//a[text()="View Transactions"]')
+    try:
+        terms_link = driver.find_element(By.CSS_SELECTOR, '#loginScrollableContainer > div > div > section > button')
+        terms_link.click()
+    except Exception as exc:
+        pass
+
+    time.sleep(WAIT_DELAY)
+    # Find all buttons
+    buttons = driver.find_elements(By.TAG_NAME, "button")
+
+    tranLink = None
+    for button in buttons:
+        if button.text == 'View transactions':
+            tranLink = button
+            break
+
     tranLink.click()
 
-    nextBtn = get_next_btn(driver)
+    # nextBtn = get_next_btn(driver)
 
     return driver
 
 
 def fetch_transactions(driver):
+    time.sleep(WAIT_DELAY)
 
+    # load 2nd page if it's available
+    try:
+        next_tran = driver.find_element(By.XPATH, '//*[@id="transaction-list"]/div[2]/button')
+        next_tran.click()
+        time.sleep(WAIT_DELAY)
+    except Exception as exc:
+        pass
+
+    transaction_data = []
+    for req in driver.requests:
+        if 'transactions' in req.url:
+            if req.response.headers.get('Content-Type') == 'application/json':
+                transaction_data.append(req.response.body)
     trans = []
-    rows = driver.find_elements(By.CSS_SELECTOR, 'div[name="transactionsHistory"] tr[name="DataContainer"]')
+    for tran_data in transaction_data:
+        tran_json = json.loads(tran_data)
+        for tran in tran_json['transactions']:
 
-    for row in rows:
+            date = parse_tran_date(tran['transaction_date'])
+            desc_payee = '%s %s' % (tran['merchant']['title'], tran['merchant']['subtitle'])
+            amount = tran['amount']
+            if tran['type'] != 'CREDIT':
+                amount = -amount
+            payer = ''
 
-        dateText = row.find_element(By.CSS_SELECTOR, 'div[name="Transaction_TransactionDate"]').text
-        date = parse_tran_date(dateText)
-        payer = row.find_element(By.CSS_SELECTOR, 'div[name="Transaction_CardName"]').text
-        desc_payee = row.find_element(By.CSS_SELECTOR, 'div[name="Transaction_TransactionDescription"]').text
-        amount = row.find_element(By.CSS_SELECTOR, 'div[name="Transaction_Amount"]').text
+            if len(desc_payee) >= 23:
+                payee = desc_payee[:23]
+                memo = desc_payee[23:]
+            else:
+                payee = desc_payee
+                memo = ''
 
-        if len(desc_payee) >= 23:
-            payee = desc_payee[:23]
-            memo = desc_payee[23:]
-        else:
-            payee = desc_payee
-            memo = ''
+            # Clean up the data
+            amount = str(amount).replace('$', '')
+            payee = re.sub('\s+', ' ', payee)
+            memo = re.sub('\s+', ' ', memo)
 
-        # Clean up the data
-        amount = amount.replace('$', '')
-        payee = re.sub('\s+', ' ', payee)
-        memo = re.sub('\s+', ' ', memo)
-
-        trans.append(Transaction(date=date,
-                                 payer=payer,
-                                 amount=amount,
-                                 memo=memo,
-                                 payee=payee))
+            trans.append(Transaction(date=date,
+                                     payer=payer,
+                                     amount=amount,
+                                     memo=memo,
+                                     payee=payee))
 
     return trans
 
 
 """See http://en.wikipedia.org/wiki/Quicken_Interchange_Format for more info."""
+
+
 @messages('Writing QIF file...', 'OK', '')
 def write_qif(trans, file_name):
-
     print(file_name)
     with codecs.open(file_name, 'w', encoding='utf-8') as f:
-
         # Write header
         print('!Account', file=f)
         print('NQIF Account', file=f)
@@ -139,17 +176,16 @@ def write_qif(trans, file_name):
         print('!Type:CCard', file=f)
 
         for t in trans:
-            print('C', file=f) # status - uncleared
-            print('D' + format_tran_date_for_qif(t.date), file=f) # date
-            print('T' + t.amount, file=f) # amount
+            print('C', file=f)  # status - uncleared
+            print('D' + format_tran_date_for_qif(t.date), file=f)  # date
+            print('T' + t.amount, file=f)  # amount
             print('M' + t.payer, file=f)
             print('P' + t.payee + t.memo, file=f)
-            print('^', file=f) # end of record
+            print('^', file=f)  # end of record
 
 
 @messages('Writing CSV file...', 'OK', '')
 def write_csv(trans, file_name):
-
     print(file_name)
     with codecs.open(file_name, 'w', encoding='utf-8') as f:
         print('Date,Amount,Payer,Payee', file=f)
@@ -172,9 +208,8 @@ def get_file_name(export_path, s_d, e_d, extension):
 
 
 def export(csv, slow, captcha):
-
     print('Use "export.py --help" to see all command line options')
-    WAIT_DELAY = 3
+    WAIT_DELAY = 5
     LOGIN_DELAY = 3
     if slow:
         WAIT_DELAY = 25
@@ -192,29 +227,14 @@ def export(csv, slow, captcha):
 
     trans = []
 
-    i = 1
-    while True:
+    page_trans = fetch_transactions(driver)
+    trans += page_trans
 
-        page_trans = fetch_transactions(driver)
-        trans += page_trans
+    page_count = len(page_trans)
 
-        page_count = len(page_trans)
-        if page_count == 0:
-            break;
-
-        print('Got %s transactions, from %s to %s' % (page_count,
-                                                      format_tran_date_for_qif(page_trans[0].date),
-                                                      format_tran_date_for_qif(page_trans[-1].date)))
-        print('Opening next page...')
-
-        try:
-            nextButton = get_next_btn(driver)
-            if not nextButton.is_displayed():
-                break
-            nextButton.click()
-            time.sleep(WAIT_DELAY);
-        except (NoSuchElementException,) as err:
-            break
+    print('Got %s transactions, from %s to %s' % (page_count,
+                                                  format_tran_date_for_qif(page_trans[0].date),
+                                                  format_tran_date_for_qif(page_trans[-1].date)))
 
     new_trans = db.get_only_new_transactions(trans)
     print('Total of %s new transactions obtained' % len(new_trans))
@@ -256,13 +276,16 @@ def export(csv, slow, captcha):
 
     """
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("""I load transactions from 28degrees-online.latitudefinancial.com.au.
 If no arguments specified, I will produce a nice QIF file for you
 To get CSV, specify run me with --csv parameter""")
     parser.add_argument('--csv', action='store_true', help='Write CSV instead of QIF')
-    parser.add_argument('--slow', action='store_true', help='Increase wait delay between actions. Use on slow internet connections or when 28degrees is acting up.')
-    parser.add_argument('--captcha', action='store_true', help='Wait until enter pressed, before login, to allow manual completion of captcha.')
-    #parser.add_argument('--statements', action='store_true', default=False)
+    parser.add_argument('--slow', action='store_true',
+                        help='Increase wait delay between actions. Use on slow internet connections or when 28degrees is acting up.')
+    parser.add_argument('--captcha', action='store_true',
+                        help='Wait until enter pressed, before login, to allow manual completion of captcha.')
+    # parser.add_argument('--statements', action='store_true', default=False)
     args = parser.parse_args()
     export(**vars(args))

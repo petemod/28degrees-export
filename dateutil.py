@@ -6,7 +6,7 @@ def parse_tran_date(dateStr):
         diffDate = datetime.now() - timedelta(days=1)
         return datetime.combine(diffDate.date(), datetime.min.time())
 
-    f_str = '%d %b %Y'
+    f_str = '%Y-%m-%dT%H:%M:%S.%fZ'
     return datetime.strptime(dateStr, f_str)
 
 

@@ -6,3 +6,5 @@ export
 2013.07.06-2013.07.24.qif
 transactions.db
 .DS_Store
+venv
+.idea

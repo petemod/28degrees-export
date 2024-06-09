@@ -1,13 +1,14 @@
 
-# Export to QIF/CSV from 28degrees Master Card website
+# Export to QIF/CSV from 28degrees Latitude Financial Service Centre website
 
 
 ## Description
 
-This utility logs into https://28degrees-online.latitudefinancial.com.au website, using
+This utility logs into https://servicecentre.latitudefinancial.com.au/login website, using
 your username and password, and simply grabs all your transactions from there,
 saving them into QIF file.
 
+**Updated to support Latitude Financial Service Centre website**
 
 ## Installation
 
@@ -16,11 +17,12 @@ You will need some things for this tool to work:
 1. Python 3
 1. WebDriver
 1. Selenium
+2. selenium-wire
 
 On OS X, you can use `brew` to install N 2 & 3 by:
 
     `brew install chromedriver`
-    `pip install selenium`
+    `pip install -r requirements.txt`
 
 As installation instructions for the things above vary for different platforms,
 I assume you know how install them, otherwise please let me know and I'll
