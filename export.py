@@ -12,7 +12,6 @@ import random
 from collections import namedtuple
 from functools import reduce
 
-# from selenium import webdriver
 from seleniumwire import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
@@ -84,7 +83,6 @@ def login(creds, captcha):
     user.send_keys(creds[1])
     btn = driver.find_element(By.CSS_SELECTOR, "#loginScrollableContainer button > span")
 
-    # btn = driver.find_element(By.NAME, 'SUBMIT')
     btn.click()
 
     time.sleep(WAIT_DELAY)
@@ -92,7 +90,7 @@ def login(creds, captcha):
     try:
         terms_link = driver.find_element(By.CSS_SELECTOR, '#loginScrollableContainer > div > div > section > button')
         terms_link.click()
-    except Exception as exc:
+    except NoSuchElementException as exception:
         pass
 
     time.sleep(WAIT_DELAY)
@@ -107,21 +105,22 @@ def login(creds, captcha):
 
     tranLink.click()
 
-    # nextBtn = get_next_btn(driver)
-
     return driver
 
 
 def fetch_transactions(driver):
     time.sleep(WAIT_DELAY)
 
-    # load 2nd page if it's available
-    try:
-        next_tran = driver.find_element(By.XPATH, '//*[@id="transaction-list"]/div[2]/button')
-        next_tran.click()
-        time.sleep(WAIT_DELAY)
-    except Exception as exc:
-        pass
+    # get subsequent transactions
+    more_pages = True
+    while more_pages:
+        try:
+            next_tran = driver.find_element(By.XPATH, '//*[@id="transaction-list"]/div[2]/button')
+            next_tran.click()
+            time.sleep(WAIT_DELAY)
+        except NoSuchElementException as exception:
+            more_pages = False
+            pass
 
     transaction_data = []
     for req in driver.requests:
